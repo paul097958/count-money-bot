@@ -139,7 +139,7 @@ async function sendLineMessage(res, identity) {
                     spacing: "sm",
                     justifyContent: "center",
                     alignItems: "center",
-                    flex: 1
+                    flex: 2
                 },
                 {
                     type: "box",
@@ -191,7 +191,7 @@ async function sendLineMessage(res, identity) {
                         }
                     ],
                     alignItems: "center",
-                    flex: 2,
+                    flex: 3,
                     paddingAll: "md"
                 }
             ],
@@ -266,6 +266,7 @@ async function sendLineMessage(res, identity) {
     };
 
     try {
+        if(arrayData.length === 0) return
         await client.pushMessage({
             to: identity,
             messages: [{
@@ -356,7 +357,6 @@ async function callGemini(identity) {
         return null;
     }
     const idnetityData = doc.data();
-
     const chatHistory = await getMessagesUntilCount(identity);
     if (chatHistory.length === 0) return
     console.log(chatHistory);
@@ -376,7 +376,6 @@ async function callGemini(identity) {
     });
     await saveDatabase(response.text, identity)
     await sendLineMessage(response.text, identity)
-
     console.log(response.text);
 }
 
@@ -420,7 +419,6 @@ function updateOrAddUser(array, updateData) {
 
 async function updateUsers(identity, userData) {
     const docRef = db.collection(identity).doc('config');
-
     try {
         await db.runTransaction(async (t) => {
             const doc = await t.get(docRef);
@@ -499,7 +497,6 @@ export const webhook = functions.https.onRequest({
             for (const event of events) {
                 await handleEvent(event);
             }
-
             res.status(200).send("OK");
         } catch (error) {
             console.error("Error handling event:", error);
