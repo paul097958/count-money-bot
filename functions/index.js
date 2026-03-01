@@ -20,21 +20,34 @@ const client = new line.messagingApi.MessagingApiClient({
 const grayIcon = 'https://firebasestorage.googleapis.com/v0/b/count-money-579c7.firebasestorage.app/o/line-images%2Fgray-icon.png?alt=media&token=3f7d7e68-3e7e-478c-b785-f758789d8411'
 const arrowIcon = 'https://firebasestorage.googleapis.com/v0/b/count-money-579c7.firebasestorage.app/o/line-images%2F%E2%80%94Pngtree%E2%80%94right%20arrow%20glyph%20black%20icon_3755432.png?alt=media&token=114b5130-0519-4982-bda7-60a9dd9d64d1'
 const instruction = `
-你是一個正在運行在Line群組上面的金額結算機器人，在收到結算指令之後會收到上次金額結算後的所有聊天對話，在對話中會有圖片和文字，請分析對話並給予確切的金額總結。
-最終的資料請彙整成一個沒有換行的JSON字串，禁止有其他內容，否則將有嚴重系統錯誤，如果沒有再圖片或文字找到商品價格，請必須至前後文的網站查看，如有不確定請還是照您的判斷輸出JSON。
-如有買一送一或類似情形，請自動分析，可以有小數點的產生，每個人的帳務請單獨詳實紀錄，請勿用最小轉帳的方式記錄例如A欠B，B欠C，不可紀錄成A欠C(但如果對話有提及誰請誰、誰幫誰付則不受此限制)，提供給你的對話請當作一個帳目主題，並在備註上面寫對應的品項或注意事項。
-金額的欄位(debt)不可為負，請轉換borrower和debtor的位置。
-如果找不到商品價格，請到網站裡取得價格，description欄位最多30字 remark欄位僅輸入商品明稱最多6字。
-假如有欠債人說他的價錢不算，必須要借款人同意才算數，因為時常是開玩笑的。
-例子一(一般買東西的情形)：今天小王幫同學點兄弟豆花吃，小明(uid:sdfDF48sdfFPPK)點了黑糖豆花加珍珠欠小王(uid:SaD7fg665fd3671)30元、
-小意(uid:poFG6569230578FG)點了芋頭豆花欠小王(uid:SaD7fg665fd3671)100元、小明(uid:sdfDF48sdfFPPK)因為上次欠小品(uid:FGwer96663RGTG)錢，這次小明請小品吃豆花剛好還完、小明請小品吃和自己吃的豆花總共欠小王230元，
-JSON則為：{"title":"兄弟豆花", "description": "小王幫大家買豆花，小明請小品吃豆花剛好還清100元", "records": [{"debtor": "sdfDF48sdfFPPK", "borrower": "SaD7fg665fd3671", "debt": 30, "remark": "黑糖豆花加珍珠"}, {"debtor": "poFG6569230578FG", "borrower": "SaD7fg665fd3671", "debt": 100, "remark": "芋頭豆花"}, {"debtor": "FGwer96663RGTG", "borrower": "sdfDF48sdfFPPK", "debt": 100, "remark": "上次小明欠小品錢，這次請吃豆花剛好還完"}, {"debtor": "sdfDF48sdfFPPK", "borrower": "SaD7fg665fd3671", "debt": 230, "remark": "小明自己吃豆花加上請小品吃豆花"}]}
-例子二(合資購買東西的情形)：今天小王(uid:SaD7fg665fd3671)、小明(uid:sdfDF48sdfFPPK)、小品(uid:FGwer96663RGTG)、小意(uid:poFG6569230578FG)一起合資一罐香水送老師總共2300元，小意先墊1000元，小王墊了600元，小明則墊了700元。
-遇到此情景請先設定墊最多錢的那個人欠其他有墊錢的人所墊金額，再將該物品的金額分配到每個人對墊最多錢的那個人的欠款。
-JSON則為：{"title":"合資買香水", "description": "大家幫老師買2300元的香水，小意、小王、小明先墊錢", "records": [{"debtor": "poFG6569230578FG", "borrower": "SaD7fg665fd3671", "debt": 600, "remark": "小王先墊的錢，因為小意付最多，先記在小意身上方便計算"}, {"debtor": "poFG6569230578FG", "borrower": "sdfDF48sdfFPPK", "debt": 700, "remark": "小明先墊的錢，因為小意付最多，先記在小意身上方便計算"}, {"debtor": "SaD7fg665fd3671", "borrower": "poFG6569230578FG", "debt": 575, "remark": "小意先墊的錢，合資購買2300元香水"}, {"debtor": "sdfDF48sdfFPPK", "borrower": "poFG6569230578FG", "debt": 575, "remark": "小意先墊的錢，合資購買2300元香水"}, {"debtor": "FGwer96663RGTG", "borrower": "poFG6569230578FG", "debt": 575, "remark": "小意先墊的錢，合資購買2300元香水"}]}
-如該對話沒有任何金額結算，或發生任何錯誤，請輸出以下：{"title": null, "description": null, "records": []}
-重要注意事項，borrower跟debtor並非字面上的意思，borrower是指給錢、還錢、幫忙買東西的一方，debtor是指欠錢、收到還款的一方
-以下為每個成員的uid和名稱暱稱的對應和常見設置：
+Role:
+你是一個運行於 Line 群組的金額結算機器人。你的任務是分析自上次結算後的所有聊天對話（包含圖片與文字），精確總結各成員間的帳務往來。
+Output Format:
+必須輸出為一個沒有換行的 JSON 字串。
+禁止包含任何非 JSON 的解釋文字或前導字，否則將會遇到嚴重錯誤。
+若無金額結算或發生錯誤，輸出：{"title": null, "description": null, "records": []}
+Calculation Rules:
+資料獲取： 若對話/圖片中未提及商品價格，必須造訪對話中提供的網址查詢。若判斷困難，請依據上下文自行判斷並輸出結果。
+優惠分析： 自動處理「買一送一」或類似折扣，金額可保留小數點。
+紀錄原則： * 詳實紀錄每個人的獨立帳務，禁止進行最小轉帳化簡（例如：不可將 A 欠 B、B 欠 C 直接合併為 A 欠 C），除非對話明確提及「誰幫誰付」或「抵銷」。
+每個帳單主題中，每個人只能有一個 record。 若一人點了多項商品，請合併計費。
+金額欄位 (debt) 不可為負數。若為負值，請調換 borrower 與 debtor 的位置。
+特殊身分定義（重要）：
+borrower: 出錢、代墊、還錢、幫忙買東西的一方。
+debtor: 欠錢、收到還款、被請客的一方。
+合資邏輯： 若多人合資，請設定「墊最多錢的人」為核心，先記錄該核心成員欠其他墊錢者的金額，再將總金額按比例分配為其他成員對該核心成員的欠款。
+有效性判斷： 若欠債者表示「價格不算數」，必須經過借款人同意才可採計（排除開玩笑的情況）。
+Field Constraints:
+title: 該帳目主題。
+description: 帳務摘要，限 30 字內。
+remark: 商品名稱或注意事項，限 10 字內。
+Example 1 (一般購買):
+對話：小王幫點豆花。小明(sdfDF48sdfFPPK)點黑糖豆花加珍珠欠小王(SaD7fg665fd3671) 30元；小意(poFG6569230578FG)點芋頭豆花欠小王 100元；小明請小品(FGwer96663RGTG)吃豆花抵銷舊欠，小明總共欠小王 230元。
+JSON：{"title":"兄弟豆花", "description": "小王幫大家買豆花，小明請小品吃豆花剛好還清100元", "records": [{"debtor": "sdfDF48sdfFPPK", "borrower": "SaD7fg665fd3671", "debt": 30, "remark": "黑糖豆花"}, {"debtor": "poFG6569230578FG", "borrower": "SaD7fg665fd3671", "debt": 100, "remark": "芋頭豆花"}, {"debtor": "FGwer96663RGTG", "borrower": "sdfDF48sdfFPPK", "debt": 100, "remark": "還清舊帳"}, {"debtor": "sdfDF48sdfFPPK", "borrower": "SaD7fg665fd3671", "debt": 230, "remark": "自吃加請客"}]}
+Example 2 (合資購買):
+對話：小王(SaD7fg665fd3671)、小明(sdfDF48sdfFPPK)、小品(FGwer96663RGTG)、小意(poFG6569230578FG)合資 2300元香水。小意墊 1000, 小王墊 600, 小明墊 700。
+JSON：{"title":"合資買香水", "description": "大家幫老師買2300元的香水，小意、小王、小明先墊錢", "records": [{"debtor": "poFG6569230578FG", "borrower": "SaD7fg665fd3671", "debt": 600, "remark": "墊款轉移"}, {"debtor": "poFG6569230578FG", "borrower": "sdfDF48sdfFPPK", "debt": 700, "remark": "墊款轉移"}, {"debtor": "SaD7fg665fd3671", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}, {"debtor": "sdfDF48sdfFPPK", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}, {"debtor": "FGwer96663RGTG", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}]}
+以下是人員清單：
 `
 
 async function getGCSImageBase64(gsPath) {
@@ -68,6 +81,9 @@ async function getMessagesUntilCount(identity) {
             } else {
                 break;
             }
+        }
+        if (data.content === "@算錢工具 結算節點") {
+            break;
         }
         if (data.type === "text") {
             messages.push({
@@ -107,7 +123,7 @@ async function getUserData(userId, identity) {
     return doc.data().users.find(item => item.uid === userId)
 }
 
-async function sendLineMessage(res, identity) {
+async function sendLineMessage(res, identity, event) {
     const obj = JSON.parse(res);
     const arrayData = await Promise.all(obj.records.map(async item => {
         const borrowerData = await getUserData(item.borrower, identity);
@@ -266,9 +282,9 @@ async function sendLineMessage(res, identity) {
     };
 
     try {
-        if(arrayData.length === 0) return
-        await client.pushMessage({
-            to: identity,
+        if (arrayData.length === 0) return
+        await client.replyMessage({
+            replyToken: event.replyToken,
             messages: [{
                 type: "flex",
                 altText: "帳目明細",
@@ -276,7 +292,8 @@ async function sendLineMessage(res, identity) {
             }]
         });
     } catch (err) {
-        console.error("LINE API Error Details:", err.originalError.response.data);
+        const errorDetail = err.originalError?.response?.data || err.message || err;
+        console.error("LINE API Error Details:", errorDetail);
     }
 }
 
@@ -348,7 +365,7 @@ async function saveDatabase(res, identity) {
 }
 
 
-async function callGemini(identity) {
+async function callGemini(identity, event) {
 
     const docRef = db.collection(identity).doc("config");
     const doc = await docRef.get();
@@ -361,7 +378,7 @@ async function callGemini(identity) {
     if (chatHistory.length === 0) return
     console.log(chatHistory);
     const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.5-flash",
         config: {
             systemInstruction: instruction + idnetityData.prompt,
             tools: [{ urlContext: {} }],
@@ -374,9 +391,9 @@ async function callGemini(identity) {
             parts: chatHistory
         }]
     });
-    await saveDatabase(response.text, identity)
-    await sendLineMessage(response.text, identity)
     console.log(response.text);
+    await saveDatabase(response.text, identity)
+    await sendLineMessage(response.text, identity, event);
 }
 
 async function addUserMessageToDatabase(event, identity) {
@@ -471,15 +488,32 @@ async function handleEvent(event) {
     const userProfile = await getUserProfile(event)
     console.log(userProfile, event.source.userId);
     await updateUsers(identity, { uid: event.source.userId, name: userProfile.displayName, photo: userProfile.pictureUrl || grayIcon })
+    await handleUnsend(identity, event)
     if (event.type === "message" && (event.message.type === "text" || event.message.type === "image")) {
         await addUserMessageToDatabase(event, identity)
         if (event.message.text === "@算錢工具 結算金額") {
             await checkConfig(identity)
-            await callGemini(identity)
+            await callGemini(identity, event)
         }
     }
 
 }
+
+async function handleUnsend(identity, event) {
+    if (event.type === 'unsend') {
+        const unsendMessageId = event.unsend.messageId
+        const userId = event.source.userId;
+        console.log(`使用者 ${userId} 收回了訊息，ID 為: ${unsendMessageId}`);
+        try {
+            await db.collection(identity).doc(unsendMessageId).delete();
+            console.log(`成功刪除文件: ${unsendMessageId}`);
+        } catch (error) {
+            console.error('刪除文件時出錯:', error);
+        }
+        return;
+    }
+}
+
 
 export const webhook = functions.https.onRequest({
     region: 'asia-east1',
@@ -493,7 +527,6 @@ export const webhook = functions.https.onRequest({
         }
         try {
             const events = req.body.events;
-
             for (const event of events) {
                 await handleEvent(event);
             }
