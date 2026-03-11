@@ -29,10 +29,10 @@ Output Format:
 Calculation Rules:
 資料獲取： 若對話/圖片中未提及商品價格，必須造訪對話中提供的網址查詢。若判斷困難，請依據上下文自行判斷並輸出結果。
 優惠分析： 自動處理「買一送一」或類似折扣，金額可保留小數點。
-紀錄原則： * 詳實紀錄每個人的獨立帳務，禁止進行最小轉帳化簡（例如：不可將 A 欠 B、B 欠 C 直接合併為 A 欠 C），除非對話明確提及「誰幫誰付」或「抵銷」。
+紀錄原則： * 詳實紀錄每個人的獨立帳務，禁止進行最小轉帳化簡（例如：不可將 A 欠 B、B 欠 C 直接合併為 A 欠 C），除非對話明確提及「誰幫誰付」或「抵銷」，borrower跟debtor不可為同一人。
 每個帳單主題中，每個人只能有一個 record。 若一人點了多項商品，請合併計費。
 金額欄位 (debt) 不可為負數。若為負值，請調換 borrower 與 debtor 的位置。
-特殊身分定義（重要）：
+特殊身分定義（重要）：*借錢給別人的人不一定是「借款人」，欠錢的人也不一定是「欠債者」。請根據對話內容判斷雙方的角色。例如，A還B錢，A就是borrower
 borrower: 出錢、代墊、還錢、幫忙買東西的一方。
 debtor: 欠錢、收到還款、被請客的一方。
 合資邏輯： 若多人合資，請設定「墊最多錢的人」為核心，先記錄該核心成員欠其他墊錢者的金額，再將總金額按比例分配為其他成員對該核心成員的欠款。
@@ -47,6 +47,7 @@ JSON：{"title":"兄弟豆花", "description": "小王幫大家買豆花，小�
 Example 2 (合資購買):
 對話：小王(SaD7fg665fd3671)、小明(sdfDF48sdfFPPK)、小品(FGwer96663RGTG)、小意(poFG6569230578FG)合資 2300元香水。小意墊 1000, 小王墊 600, 小明墊 700。
 JSON：{"title":"合資買香水", "description": "大家幫老師買2300元的香水，小意、小王、小明先墊錢", "records": [{"debtor": "poFG6569230578FG", "borrower": "SaD7fg665fd3671", "debt": 600, "remark": "墊款轉移"}, {"debtor": "poFG6569230578FG", "borrower": "sdfDF48sdfFPPK", "debt": 700, "remark": "墊款轉移"}, {"debtor": "SaD7fg665fd3671", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}, {"debtor": "sdfDF48sdfFPPK", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}, {"debtor": "FGwer96663RGTG", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}]}
+注意事項：debtor和borrower不可為同一人，請仔細看清楚誰點了什麼，照片的內容請看清楚，否則將有嚴重損失。
 以下是人員清單：
 `
 
@@ -378,7 +379,7 @@ async function callGemini(identity, event) {
     if (chatHistory.length === 0) return
     console.log(chatHistory);
     const response = await ai.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: "gemini-3-flash-preview",
         config: {
             systemInstruction: instruction + idnetityData.prompt,
             tools: [{ urlContext: {} }],
@@ -392,6 +393,14 @@ async function callGemini(identity, event) {
         }]
     });
     console.log(response.text);
+    if (response.usageMetadata) {
+        console.log("--- Token 統計 ---");
+        console.log("輸入 (Prompt) Token:", response.usageMetadata.promptTokenCount);
+        console.log("輸出 (Candidates) Token:", response.usageMetadata.candidatesTokenCount);
+        console.log("總計 (Total) Token:", response.usageMetadata.totalTokenCount);
+    } else {
+        console.log("無法獲取 Token 資訊");
+    }
     await saveDatabase(response.text, identity)
     await sendLineMessage(response.text, identity, event);
 }
