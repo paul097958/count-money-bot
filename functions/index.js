@@ -343,6 +343,7 @@ async function saveDatabase(res, identity) {
             }
         }
     })
+    const uniqueUids = [...new Set(newRecords.flatMap(item => [item.first, item.second]))];
     const docRef = db.collection(identity).doc('config');
     try {
         await db.runTransaction(async (t) => {
@@ -356,6 +357,7 @@ async function saveDatabase(res, identity) {
         });
         const recordDocRef = await db.collection(identity).add({
             ...obj,
+            users: uniqueUids,
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
         console.log("新文件已建立，ID 為:", recordDocRef.id);
