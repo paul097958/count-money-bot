@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import axios from "axios";
 import { GoogleGenAI } from "@google/genai";
 import admin from "firebase-admin";
+import ubereatsScraper from "./ubereats-scraper.js";
 dotenv.config();
 admin.initializeApp();
 const db = admin.firestore();
@@ -25,7 +26,7 @@ Role:
 Output Format:
 必須輸出為一個沒有換行的 JSON 字串。
 禁止包含任何非 JSON 的解釋文字或前導字，否則將會遇到嚴重錯誤。
-若無金額結算或發生錯誤，輸出：{"title": null, "description": null, "records": []}
+若無金額結算或發生錯誤，輸出：{"title": null, "description": null, "records": [], "plugins": {}}
 Calculation Rules:
 資料獲取： 若對話/圖片中未提及商品價格，必須造訪對話中提供的網址查詢。若判斷困難，請依據上下文自行判斷並輸出結果。
 優惠分析： 自動處理「買一送一」或類似折扣，金額可保留小數點。
@@ -43,11 +44,17 @@ description: 帳務摘要，限 30 字內。
 remark: 商品名稱或注意事項，限 10 字內。
 Example 1 (一般購買):
 對話：小王幫點豆花。小明(sdfDF48sdfFPPK)點黑糖豆花加珍珠欠小王(SaD7fg665fd3671) 30元；小意(poFG6569230578FG)點芋頭豆花欠小王 100元；小明請小品(FGwer96663RGTG)吃豆花抵銷舊欠，小明總共欠小王 230元。
-JSON：{"title":"兄弟豆花", "description": "小王幫大家買豆花，小明請小品吃豆花剛好還清100元", "records": [{"debtor": "sdfDF48sdfFPPK", "borrower": "SaD7fg665fd3671", "debt": 30, "remark": "黑糖豆花"}, {"debtor": "poFG6569230578FG", "borrower": "SaD7fg665fd3671", "debt": 100, "remark": "芋頭豆花"}, {"debtor": "FGwer96663RGTG", "borrower": "sdfDF48sdfFPPK", "debt": 100, "remark": "還清舊帳"}, {"debtor": "sdfDF48sdfFPPK", "borrower": "SaD7fg665fd3671", "debt": 230, "remark": "自吃加請客"}]}
+JSON：{"title":"兄弟豆花", "description": "小王幫大家買豆花，小明請小品吃豆花剛好還清100元", "records": [{"debtor": "sdfDF48sdfFPPK", "borrower": "SaD7fg665fd3671", "debt": 30, "remark": "黑糖豆花"}, {"debtor": "poFG6569230578FG", "borrower": "SaD7fg665fd3671", "debt": 100, "remark": "芋頭豆花"}, {"debtor": "FGwer96663RGTG", "borrower": "sdfDF48sdfFPPK", "debt": 100, "remark": "還清舊帳"}, {"debtor": "sdfDF48sdfFPPK", "borrower": "SaD7fg665fd3671", "debt": 230, "remark": "自吃加請客"}], "plugins": {}}
 Example 2 (合資購買):
 對話：小王(SaD7fg665fd3671)、小明(sdfDF48sdfFPPK)、小品(FGwer96663RGTG)、小意(poFG6569230578FG)合資 2300元香水。小意墊 1000, 小王墊 600, 小明墊 700。
-JSON：{"title":"合資買香水", "description": "大家幫老師買2300元的香水，小意、小王、小明先墊錢", "records": [{"debtor": "poFG6569230578FG", "borrower": "SaD7fg665fd3671", "debt": 600, "remark": "墊款轉移"}, {"debtor": "poFG6569230578FG", "borrower": "sdfDF48sdfFPPK", "debt": 700, "remark": "墊款轉移"}, {"debtor": "SaD7fg665fd3671", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}, {"debtor": "sdfDF48sdfFPPK", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}, {"debtor": "FGwer96663RGTG", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}]}
+JSON：{"title":"合資買香水", "description": "大家幫老師買2300元的香水，小意、小王、小明先墊錢", "records": [{"debtor": "poFG6569230578FG", "borrower": "SaD7fg665fd3671", "debt": 600, "remark": "墊款轉移"}, {"debtor": "poFG6569230578FG", "borrower": "sdfDF48sdfFPPK", "debt": 700, "remark": "墊款轉移"}, {"debtor": "SaD7fg665fd3671", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}, {"debtor": "sdfDF48sdfFPPK", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}, {"debtor": "FGwer96663RGTG", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}], "plugins": {}}
 注意事項：debtor和borrower不可為同一人，請仔細看清楚誰點了什麼，照片的內容請看清楚，否則將有嚴重損失。
+
+plugin1 ubereats-scraper:
+condition: 只要聊天室有人傳字串包含ubereats.com的連結就依照以下範例輸出:
+A要黑糖豆花加珍珠，B要薏仁湯
+JSON：{"title": 略, "description": 略, "records": 略, "plugins": {"ubereatsScraper": {"url": "https://www.ubereats.com/store/xxxx", "inputs": [["黑糖豆花", ["珍珠"]], ["薏仁湯", [""]]]}}}
+注意事項：就算沒有屬性array的第二個還是要加上一個空字串。
 以下是人員清單：
 `
 
@@ -122,6 +129,26 @@ async function getUserData(userId, identity) {
     const doc = await db.collection(identity).doc('config').get()
     if (!doc.exists) return null
     return doc.data().users.find(item => item.uid === userId)
+}
+
+async function getUbereatsScraper(url, inputs, identity) {
+    try {
+        const docRef = db.collection(identity + 'secure').doc('ubereats');
+        const doc = await docRef.get();
+        if (!doc.exists) {
+            console.log('找不到該文件！');
+            return
+        } else {
+            const ubereatsData = doc.data();
+            if(ubereatsData.enable && ubereatsData.sid.trim() != ''){
+                await ubereatsScraper(ubereatsData.sid, url, inputs)
+            }else{
+                return
+            }
+        }
+    } catch (error) {
+        console.error('取得資料時發生錯誤：', error);
+    }
 }
 
 async function sendLineMessage(res, identity, event) {
@@ -270,7 +297,7 @@ async function sendLineMessage(res, identity, event) {
                     action: {
                         type: "uri",
                         label: "更改",
-                        uri: "https://line.me/"
+                        uri: `https://liff.line.me/${process.env.LINE_LIFF}/?g=${identity}`
                     }
                 }
             ]
@@ -292,6 +319,7 @@ async function sendLineMessage(res, identity, event) {
                 contents: flexData
             }]
         });
+        await getUbereatsScraper(obj.plugins.ubereatsScraper.url, obj.plugins.ubereatsScraper.inputs, identity)
     } catch (err) {
         const errorDetail = err.originalError?.response?.data || err.message || err;
         console.error("LINE API Error Details:", errorDetail);
@@ -356,7 +384,9 @@ async function saveDatabase(res, identity) {
             t.update(docRef, { records: resultRecords });
         });
         const recordDocRef = await db.collection(identity).add({
-            ...obj,
+            title: obj.title,
+            description: obj.description,
+            records: obj.records,
             users: uniqueUids,
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
@@ -528,8 +558,8 @@ async function handleUnsend(identity, event) {
 
 export const webhook = functions.https.onRequest({
     region: 'asia-east1',
-    memory: '512MiB',
-    timeoutSeconds: 120
+    memory: '2GiB',
+    timeoutSeconds: 540
 }, (req, res) => {
     line.middleware(config)(req, res, async (err) => {
         if (err) {
