@@ -285,7 +285,7 @@ async function handleEvent(event) {
         identity = event.source.groupId;
     }
     const userProfile = await getUserProfile(event)
-    console.log(`${userProfile.displayName}傳送了：${event.message.text} 在 ${identity}`);
+    console.log(`${userProfile.displayName}傳送了：${event.message?.text || '無內容'} 在 ${identity}`);
     await updateUsers(identity, { uid: event.source.userId, name: userProfile.displayName, photo: userProfile.pictureUrl || grayIcon })
     await checkConfig(identity)
     if (event.type === "message" && (event.message.type === "text" || event.message.type === "image")) {
