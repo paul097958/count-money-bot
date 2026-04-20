@@ -1,55 +1,37 @@
-import * as functions from "firebase-functions";
-import * as line from "@line/bot-sdk";
+import { readFile } from 'node:fs/promises';
+import fs from 'node:fs';
+import path from 'node:path';
+import { join } from 'node:path';
+import express from 'express';
+import https from 'node:https';
 import dotenv from "dotenv";
 import axios from "axios";
-import { GoogleGenAI } from "@google/genai";
-import admin from "firebase-admin";
+import { Ollama } from 'ollama'
+import * as line from "@line/bot-sdk";
+import sendLineMessage from './utils/send_message.js'
+import { getFixedOrder, mergeDebtArrays, getUserData } from './utils/functions.js'
+import admin from './utils/firebase.js';
+import { db, storage, bucket } from './utils/firebase.js'
+import { config, client } from './utils/line.js';
 dotenv.config();
-admin.initializeApp();
-const db = admin.firestore();
-const storage = admin.storage();
-const bucket = admin.storage().bucket();
-const ai = new GoogleGenAI({ apiKey: process.env.AI_KEY });
-const config = {
-    channelSecret: process.env.CHANNEL_SECRET,
-    channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
-};
-const client = new line.messagingApi.MessagingApiClient({
-    channelAccessToken: config.channelAccessToken,
-});
+const app = express();
 const grayIcon = 'https://firebasestorage.googleapis.com/v0/b/count-money-579c7.firebasestorage.app/o/line-images%2Fgray-icon.png?alt=media&token=3f7d7e68-3e7e-478c-b785-f758789d8411'
-const arrowIcon = 'https://firebasestorage.googleapis.com/v0/b/count-money-579c7.firebasestorage.app/o/line-images%2F%E2%80%94Pngtree%E2%80%94right%20arrow%20glyph%20black%20icon_3755432.png?alt=media&token=114b5130-0519-4982-bda7-60a9dd9d64d1'
-const instruction = `
-Role:
-你是一個運行於 Line 群組的金額結算機器人。你的任務是分析自上次結算後的所有聊天對話（包含圖片與文字），精確總結各成員間的帳務往來。
-Output Format:
-必須輸出為一個沒有換行的 JSON 字串。
-禁止包含任何非 JSON 的解釋文字或前導字，否則將會遇到嚴重錯誤。
-若無金額結算或發生錯誤，輸出：{"title": null, "description": null, "records": []}
-Calculation Rules:
-資料獲取： 若對話/圖片中未提及商品價格，必須造訪對話中提供的網址查詢。若判斷困難，請依據上下文自行判斷並輸出結果。
-優惠分析： 自動處理「買一送一」或類似折扣，金額可保留小數點。
-紀錄原則： * 詳實紀錄每個人的獨立帳務，禁止進行最小轉帳化簡（例如：不可將 A 欠 B、B 欠 C 直接合併為 A 欠 C），除非對話明確提及「誰幫誰付」或「抵銷」，borrower跟debtor不可為同一人。
-每個帳單主題中，每個人只能有一個 record。 若一人點了多項商品，請合併計費。
-金額欄位 (debt) 不可為負數。若為負值，請調換 borrower 與 debtor 的位置。
-特殊身分定義（重要）：*借錢給別人的人不一定是「借款人」，欠錢的人也不一定是「欠債者」。請根據對話內容判斷雙方的角色。例如，A還B錢，A就是borrower
-borrower: 出錢、代墊、還錢、幫忙買東西的一方。
-debtor: 欠錢、收到還款、被請客的一方。
-合資邏輯： 若多人合資，請設定「墊最多錢的人」為核心，先記錄該核心成員欠其他墊錢者的金額，再將總金額按比例分配為其他成員對該核心成員的欠款。
-有效性判斷： 若欠債者表示「價格不算數」，必須經過借款人同意才可採計（排除開玩笑的情況）。
-Field Constraints:
-title: 該帳目主題。
-description: 帳務摘要，限 30 字內。
-remark: 商品名稱或注意事項，限 10 字內。
-Example 1 (一般購買):
-對話：小王幫點豆花。小明(sdfDF48sdfFPPK)點黑糖豆花加珍珠欠小王(SaD7fg665fd3671) 30元；小意(poFG6569230578FG)點芋頭豆花欠小王 100元；小明請小品(FGwer96663RGTG)吃豆花抵銷舊欠，小明總共欠小王 230元。
-JSON：{"title":"兄弟豆花", "description": "小王幫大家買豆花，小明請小品吃豆花剛好還清100元", "records": [{"debtor": "sdfDF48sdfFPPK", "borrower": "SaD7fg665fd3671", "debt": 30, "remark": "黑糖豆花"}, {"debtor": "poFG6569230578FG", "borrower": "SaD7fg665fd3671", "debt": 100, "remark": "芋頭豆花"}, {"debtor": "FGwer96663RGTG", "borrower": "sdfDF48sdfFPPK", "debt": 100, "remark": "還清舊帳"}, {"debtor": "sdfDF48sdfFPPK", "borrower": "SaD7fg665fd3671", "debt": 230, "remark": "自吃加請客"}]}
-Example 2 (合資購買):
-對話：小王(SaD7fg665fd3671)、小明(sdfDF48sdfFPPK)、小品(FGwer96663RGTG)、小意(poFG6569230578FG)合資 2300元香水。小意墊 1000, 小王墊 600, 小明墊 700。
-JSON：{"title":"合資買香水", "description": "大家幫老師買2300元的香水，小意、小王、小明先墊錢", "records": [{"debtor": "poFG6569230578FG", "borrower": "SaD7fg665fd3671", "debt": 600, "remark": "墊款轉移"}, {"debtor": "poFG6569230578FG", "borrower": "sdfDF48sdfFPPK", "debt": 700, "remark": "墊款轉移"}, {"debtor": "SaD7fg665fd3671", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}, {"debtor": "sdfDF48sdfFPPK", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}, {"debtor": "FGwer96663RGTG", "borrower": "poFG6569230578FG", "debt": 575, "remark": "香水分擔"}]}
-注意事項：debtor和borrower不可為同一人，請仔細看清楚誰點了什麼，照片的內容請看清楚，否則將有嚴重損失。
-以下是人員清單：
-`
+
+async function readTxtFile() {
+    try {
+        const filePath = join(process.cwd(), 'resources', 'prompt.txt');
+        const data = await readFile(filePath, 'utf8');
+        return data;
+    } catch (err) {
+        if (err.code === 'ENOENT') {
+            console.error('錯誤：找不到檔案，請檢查 ./resource 目錄下是否有 data.txt');
+        } else {
+            console.error('讀取時發生錯誤：', err);
+        }
+    }
+}
+
+const instruction = await readTxtFile();
 
 async function getGCSImageBase64(gsPath) {
     try {
@@ -88,14 +70,14 @@ async function getMessagesUntilCount(identity) {
         }
         if (data.type === "text") {
             messages.push({
-                text: `(message id: ${doc.id}) ${data.sender}: ${data.content}`
+                role: 'user',
+                content: `(message id: ${doc.id}) ${data.sender}: ${data.content}`
             });
         } else if (data.type === "image") {
             messages.push({
-                text: `(message id: ${doc.id}) ${data.sender}: 我傳了一張圖片。`
-            });
-            messages.push({
-                inlineData: { mimeType: "image/jpeg", data: await getGCSImageBase64(data.content) }
+                role: 'user',
+                content: `(message id: ${doc.id}) ${data.sender}傳了一張圖片：`,
+                images: [await getGCSImageBase64(data.content)]
             });
         }
     }
@@ -118,208 +100,8 @@ async function storeImage(event, identity) {
     await db.collection(identity).doc(event.message.id).set({ sender: event.source.userId, type: "image", content: gsUri, timestamp: event.timestamp });
 }
 
-async function getUserData(userId, identity) {
-    const doc = await db.collection(identity).doc('config').get()
-    if (!doc.exists) return null
-    return doc.data().users.find(item => item.uid === userId)
-}
 
-async function sendLineMessage(res, identity, event) {
-    const obj = JSON.parse(res);
-    const arrayData = await Promise.all(obj.records.map(async item => {
-        const borrowerData = await getUserData(item.borrower, identity);
-        const debtorData = await getUserData(item.debtor, identity);
-        return {
-            type: "box",
-            layout: "horizontal",
-            contents: [
-                {
-                    type: "box",
-                    layout: "vertical",
-                    contents: [
-                        {
-                            type: "text",
-                            text: '$' + item.debt.toLocaleString(),
-                            weight: "bold",
-                            size: "xl"
-                        },
-                        {
-                            type: "text",
-                            text: item.remark || " ",
-                            size: "xs",
-                            color: "#9D9D9D",
-                            gravity: "center",
-                            wrap: true
-                        }
-                    ],
-                    margin: "xs",
-                    spacing: "sm",
-                    justifyContent: "center",
-                    alignItems: "center",
-                    flex: 2
-                },
-                {
-                    type: "box",
-                    layout: "horizontal",
-                    contents: [
-                        {
-                            type: "box",
-                            layout: "vertical",
-                            contents: [
-                                {
-                                    type: "image",
-                                    url: borrowerData.photo || grayIcon,
-                                    size: "40px",
-                                    aspectMode: "fit"
-                                },
-                                {
-                                    type: "text",
-                                    text: borrowerData.name,
-                                    align: "center",
-                                    size: "xxs",
-                                    wrap: false
-                                }
-                            ]
-                        },
-                        {
-                            type: "image",
-                            url: arrowIcon,
-                            size: "35px",
-                            aspectMode: "fit"
-                        },
-                        {
-                            type: "box",
-                            layout: "vertical",
-                            contents: [
-                                {
-                                    type: "image",
-                                    url: debtorData.photo || grayIcon,
-                                    size: "40px",
-                                    aspectMode: "fit"
-                                },
-                                {
-                                    type: "text",
-                                    text: debtorData.name,
-                                    align: "center",
-                                    size: "xxs",
-                                    wrap: false
-                                }
-                            ]
-                        }
-                    ],
-                    alignItems: "center",
-                    flex: 3,
-                    paddingAll: "md"
-                }
-            ],
-            margin: "lg"
-        };
-    }));
 
-    const flexData = {
-        type: "bubble",
-        header: {
-            type: "box",
-            layout: "vertical",
-            contents: [
-                {
-                    type: "text",
-                    text: "帳單明細",
-                    color: "#E0E0E0",
-                    size: "md"
-                }
-            ]
-        },
-        body: {
-            type: "box",
-            layout: "vertical",
-            contents: [
-                {
-                    type: "text",
-                    text: obj.title || "未命名帳目",
-                    weight: "bold",
-                    wrap: true,
-                    size: "xl"
-                },
-                {
-                    type: "text",
-                    text: obj.description || " ",
-                    color: "#9D9D9D",
-                    wrap: true,
-                    size: "16px"
-                },
-                ...arrayData,
-                {
-                    type: "text",
-                    text: "此帳目為AI生成如有錯誤，請按下方更改按鈕",
-                    margin: "lg",
-                    size: "xxs",
-                    color: "#BEBEBE"
-                }
-            ]
-        },
-        footer: {
-            type: "box",
-            layout: "vertical",
-            spacing: "sm",
-            contents: [
-                {
-                    type: "button",
-                    style: "link",
-                    height: "sm",
-                    action: {
-                        type: "uri",
-                        label: "更改",
-                        uri: "https://line.me/"
-                    }
-                }
-            ]
-        },
-        styles: {
-            header: {
-                backgroundColor: "#004B97"
-            }
-        }
-    };
-
-    try {
-        if (arrayData.length === 0) return
-        await client.replyMessage({
-            replyToken: event.replyToken,
-            messages: [{
-                type: "flex",
-                altText: "帳目明細",
-                contents: flexData
-            }]
-        });
-    } catch (err) {
-        const errorDetail = err.originalError?.response?.data || err.message || err;
-        console.error("LINE API Error Details:", errorDetail);
-    }
-}
-
-function getFixedOrder(str1, str2) {
-    return [str1, str2].sort((a, b) => a.localeCompare(b));
-}
-
-function mergeDebtArrays(oldArray, newArray) {
-    const map = new Map();
-    oldArray.forEach(item => {
-        const key = `${item.first}_${item.second}`;
-        map.set(key, { ...item });
-    });
-    newArray.forEach(newItem => {
-        const key = `${newItem.first}_${newItem.second}`;
-
-        if (map.has(key)) {
-            const existing = map.get(key);
-            existing.debt += newItem.debt;
-        } else {
-            map.set(key, { ...newItem });
-        }
-    });
-    return Array.from(map.values());
-}
 
 async function saveDatabase(res, identity) {
     const obj = JSON.parse(res);
@@ -360,7 +142,7 @@ async function saveDatabase(res, identity) {
             users: uniqueUids,
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
-        console.log("新文件已建立，ID 為:", recordDocRef.id);
+        console.log("新文件已建立，ID 為:", recordDocRef.id, '\n');
     } catch (e) {
         console.log('交易失敗:', e);
     }
@@ -369,7 +151,6 @@ async function saveDatabase(res, identity) {
 
 
 async function callGemini(identity, event) {
-
     const docRef = db.collection(identity).doc("config");
     const doc = await docRef.get();
     if (!doc.exists) {
@@ -379,32 +160,19 @@ async function callGemini(identity, event) {
     const idnetityData = doc.data();
     const chatHistory = await getMessagesUntilCount(identity);
     if (chatHistory.length === 0) return
-    console.log(chatHistory);
-    const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        config: {
-            systemInstruction: instruction + idnetityData.prompt,
-            tools: [{ urlContext: {} }],
-        },
-        generationConfig: {
+    console.log(`總共${chatHistory.length}條消息，準備call AI`);
+    const ollama = new Ollama({ host: process.env.API_URL })
+    const response = await ollama.chat({
+        model: 'gemma4:latest',
+        messages: [{ role: 'system', content: instruction + idnetityData.prompt }, ...chatHistory],
+        format: 'json',
+        stream: false,
+        options: {
             temperature: 0
-        },
-        contents: [{
-            role: 'user',
-            parts: chatHistory
-        }]
+        }
     });
-    console.log(response.text);
-    if (response.usageMetadata) {
-        console.log("--- Token 統計 ---");
-        console.log("輸入 (Prompt) Token:", response.usageMetadata.promptTokenCount);
-        console.log("輸出 (Candidates) Token:", response.usageMetadata.candidatesTokenCount);
-        console.log("總計 (Total) Token:", response.usageMetadata.totalTokenCount);
-    } else {
-        console.log("無法獲取 Token 資訊");
-    }
-    await saveDatabase(response.text, identity)
-    await sendLineMessage(response.text, identity, event);
+    console.log('AI的回覆：', response.message.content);
+    return response.message.content
 }
 
 async function addUserMessageToDatabase(event, identity) {
@@ -485,7 +253,26 @@ async function getUserProfile(event) {
         return profile;
     } catch (error) {
         console.error("Error fetching profile:", error.message);
+        return false
     }
+}
+
+async function checkJSONValid(res, identity) {
+    const obj = JSON.parse(res);
+    if (!obj?.title && typeof obj?.title !== 'string') return { status: false, message: '缺少title' }
+    if (!obj?.description && typeof obj?.description !== 'string') return { status: false, message: '缺少description' }
+    if (obj?.records?.length === 0) return { status: false, message: 'records長度為零' }
+    for (const item of obj.records) {
+        if (!item?.borrower && typeof item?.borrower !== 'string') return { status: false, message: 'records中缺少borrower或borrower不是string' }
+        if (!item?.debtor && typeof item?.debtor !== 'string') return { status: false, message: 'records中缺少debtor或debtor不是string' }
+        if (typeof item?.debt !== 'number') return { status: false, message: 'records中缺少debt或debt不是number' }
+        if (!item?.remark && typeof item?.remark !== 'string') return { status: false, message: 'records中缺少remark或remark不是string' }
+        const borrowerUserData = await getUserData(item.borrower, identity);
+        const debtorUserData = await getUserData(item.debtor, identity);
+        if (!borrowerUserData) return { status: false, message: `找不到borrower ${item.borrower}的用戶資料` }
+        if (!debtorUserData) return { status: false, message: `找不到debtor ${item.debtor}的用戶資料` }
+    }
+    return { status: true }
 }
 
 async function handleEvent(event) {
@@ -497,14 +284,22 @@ async function handleEvent(event) {
         identity = event.source.groupId;
     }
     const userProfile = await getUserProfile(event)
-    console.log(userProfile, event.source.userId);
+    console.log(`${userProfile.displayName}傳送了：${event.message.text} 在 ${identity}`);
     await updateUsers(identity, { uid: event.source.userId, name: userProfile.displayName, photo: userProfile.pictureUrl || grayIcon })
-    await handleUnsend(identity, event)
+    await checkConfig(identity)
     if (event.type === "message" && (event.message.type === "text" || event.message.type === "image")) {
+        await handleUnsend(identity, event)
         await addUserMessageToDatabase(event, identity)
         if (event.message.text === "@算錢工具 結算金額") {
-            await checkConfig(identity)
-            await callGemini(identity, event)
+            const res = await callGemini(identity, event)
+            const resStatus = await checkJSONValid(res, identity)
+            if (resStatus.status) {
+                await saveDatabase(res, identity)
+                await sendLineMessage(res, identity, event);
+            } else {
+                console.log('格式錯誤：', resStatus.status)
+            }
+
         }
     }
 
@@ -526,25 +321,34 @@ async function handleUnsend(identity, event) {
 }
 
 
-export const webhook = functions.https.onRequest({
-    region: 'asia-east1',
-    memory: '512MiB',
-    timeoutSeconds: 120
-}, (req, res) => {
-    line.middleware(config)(req, res, async (err) => {
-        if (err) {
-            console.error("Signature validation failed:", err);
-            return res.status(400).send("Bad Request");
-        }
-        try {
-            const events = req.body.events;
-            for (const event of events) {
-                await handleEvent(event);
-            }
-            res.status(200).send("OK");
-        } catch (error) {
-            console.error("Error handling event:", error);
-            res.status(500).send("Internal Server Error");
-        }
-    });
+app.get('/test', async (req, res) => {
+    res.send("Hello World!");
+})
+
+app.post('/webhook', line.middleware(config), async (req, res) => {
+    try {
+        const events = req.body.events;
+
+        // 併發處理所有 event
+        await Promise.all(events.map(event => handleEvent(event)));
+
+        res.status(200).send("OK");
+    } catch (error) {
+        console.error("Error handling event:", error);
+        res.status(500).send("Internal Server Error");
+    }
+});
+
+const sslOptions = {
+    cert: fs.readFileSync(path.join(process.cwd(), '../ssl/fullchain.pem')),
+    key: fs.readFileSync(path.join(process.cwd(), '../ssl/privkey.pem'))
+};
+
+const PORT = 9000;
+const HOST = '0.0.0.0';
+
+https.createServer(sslOptions, app).listen(PORT, HOST, () => {
+    console.log(`🚀 LINE Bot HTTPS Server 啟動成功！`);
+    console.log(`🔗 監聽網址: https://${HOST}:${PORT}/webhook`);
+    console.log(`⚠️ 請確保你的防火牆已開啟 9000 埠`);
 });
