@@ -30,3 +30,4 @@ yarn-error.log*
 /.env.*
 /ssl
 /store.txt
+functions/test.js

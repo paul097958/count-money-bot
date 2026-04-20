@@ -102,7 +102,6 @@ async function storeImage(event, identity) {
 
 
 
-
 async function saveDatabase(res, identity) {
     const obj = JSON.parse(res);
     const recordsData = obj.records
@@ -138,7 +137,9 @@ async function saveDatabase(res, identity) {
             t.update(docRef, { records: resultRecords });
         });
         const recordDocRef = await db.collection(identity).add({
-            ...obj,
+            title: obj.title,
+            description: obj.description,
+            records: obj.records,
             users: uniqueUids,
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
